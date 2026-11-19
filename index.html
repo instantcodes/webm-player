@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>WebM Player</title>
+<style>
+  :root {
+    --bg: #f5f5f8; --text: #16161d; --muted: #70707f; --card: #ffffff;
+    --line: rgba(0,0,0,.08); --accent: #7c5cff; --accent2: #3b82f6;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b0b10; --text: #f2f2f7; --muted: #8e8ea0; --card: #15151c;
+      --line: rgba(255,255,255,.08); color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b0b10; --text: #f2f2f7; --muted: #8e8ea0; --card: #15151c;
+    --line: rgba(255,255,255,.08); color-scheme: dark;
+  }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; padding: 20px;
+    background: radial-gradient(900px 500px at 50% -10%, rgba(124,92,255,.18), transparent 60%), var(--bg);
+    color: var(--text);
+    font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .app { max-width: 1000px; margin: 0 auto; }
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .logo { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: -.01em; font-size: 1.05rem; }
+  .logo i {
+    width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center;
+    background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff;
+  }
+  .ghost {
+    background: var(--card); color: var(--text); border: 1px solid var(--line);
+    padding: 9px 16px; border-radius: 999px; font: inherit; font-size: .9rem; cursor: pointer;
+    transition: transform .15s, border-color .15s;
+  }
+  .ghost:hover { border-color: var(--accent); transform: translateY(-1px); }
+
+  .stage {
+    position: relative; background: #000; border-radius: 22px; overflow: hidden;
+    aspect-ratio: 16 / 9; box-shadow: 0 30px 80px -30px rgba(80,60,200,.45), 0 0 0 1px var(--line);
+  }
+  .stage:fullscreen { aspect-ratio: auto; border-radius: 0; }
+  .stage.idle { cursor: none; }
+  video { width: 100%; height: 100%; display: none; object-fit: contain; background: #000; }
+
+  .drop {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 10px; text-align: center; padding: 20px;
+    color: #c9c9d6; cursor: pointer; transition: background .2s;
+    background: radial-gradient(600px 300px at 50% 40%, rgba(124,92,255,.22), transparent 70%), #0d0d14;
+  }
+  .drop.over, .drop:hover { background: radial-gradient(600px 300px at 50% 40%, rgba(124,92,255,.38), transparent 70%), #0d0d14; }
+  .drop .ico {
+    width: 72px; height: 72px; border-radius: 50%; display: grid; place-items: center; margin-bottom: 6px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff;
+    box-shadow: 0 12px 40px -8px rgba(124,92,255,.7);
+  }
+  .drop b { font-size: 1.2rem; color: #fff; font-weight: 600; }
+  .drop span { font-size: .9rem; }
+
+  .bigplay {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(.9);
+    width: 84px; height: 84px; border-radius: 50%; border: 1px solid rgba(255,255,255,.25);
+    background: rgba(255,255,255,.14); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    color: #fff; display: grid; place-items: center; cursor: pointer;
+    opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s;
+  }
+  .stage.loaded.paused .bigplay { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%) scale(1); }
+
+  .controls {
+    position: absolute; left: 0; right: 0; bottom: 0; display: none; flex-direction: column; gap: 8px;
+    padding: 40px 18px 14px; color: #fff;
+    background: linear-gradient(to top, rgba(0,0,0,.8), rgba(0,0,0,0));
+    transition: opacity .25s;
+  }
+  .stage.idle .controls { opacity: 0; pointer-events: none; }
+  .row { display: flex; align-items: center; gap: 6px; }
+  .spacer { flex: 1; }
+  .time { font-variant-numeric: tabular-nums; font-size: .85rem; color: rgba(255,255,255,.85); margin-left: 8px; }
+
+  .ibtn {
+    background: transparent; border: 0; color: #fff; height: 38px; min-width: 38px; padding: 0 10px;
+    border-radius: 12px; display: inline-grid; place-items: center; cursor: pointer;
+    font: inherit; font-size: .82rem; font-weight: 600; transition: background .15s;
+  }
+  .ibtn:hover { background: rgba(255,255,255,.16); }
+  .ibtn.play { background: #fff; color: #111; border-radius: 50%; width: 42px; height: 42px; padding: 0; }
+  .ibtn.play:hover { background: #e8e8f0; }
+  select {
+    background: rgba(255,255,255,.14); color: #fff; border: 0; border-radius: 999px;
+    padding: 7px 10px; font: inherit; font-size: .82rem; cursor: pointer;
+  }
+  select option { color: #111; }
+
+  input[type=range] { -webkit-appearance: none; appearance: none; background: transparent; cursor: pointer; margin: 0; }
+  input[type=range]::-webkit-slider-runnable-track { height: 5px; border-radius: 99px; }
+  input[type=range]::-moz-range-track { height: 5px; border-radius: 99px; }
+  #seek { width: 100%; height: 18px; --p: 0%; }
+  #seek::-webkit-slider-runnable-track {
+    background: linear-gradient(to right, var(--accent) var(--p), rgba(255,255,255,.28) var(--p));
+  }
+  #seek::-moz-range-track {
+    background: linear-gradient(to right, var(--accent) var(--p), rgba(255,255,255,.28) var(--p));
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff;
+    margin-top: -4.5px; box-shadow: 0 2px 8px rgba(0,0,0,.5); transition: transform .15s;
+  }
+  input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; }
+  #seek:hover::-webkit-slider-thumb { transform: scale(1.3); }
+  #volume { width: 80px; }
+  #volume::-webkit-slider-runnable-track { background: rgba(255,255,255,.35); }
+  #volume::-moz-range-track { background: rgba(255,255,255,.35); }
+
+  .meta { display: flex; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 0 4px;
+          font-size: .85rem; color: var(--muted); }
+  #fileName { word-break: break-all; }
+  #status { white-space: nowrap; }
+  @media (max-width: 560px) {
+    #volume, .time { display: none; }
+    .controls { padding: 30px 10px 10px; }
+  }
+</style>
+</head>
+<body>
+<main class="app">
+  <header>
+    <div class="logo">
+      <i><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></i>
+      WebM Player
+    </div>
+    <button class="ghost" id="openBtn">Open file</button>
+  </header>
+
+  <div class="stage" id="screen">
+    <video id="video" playsinline></video>
+
+    <div class="drop" id="drop">
+      <div class="ico">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M6 10l6-6 6 6M4 20h16"/></svg>
+      </div>
+      <b>Drop your WebM video here</b>
+      <span>or click to choose a file</span>
+    </div>
+
+    <button class="bigplay" id="bigPlay" aria-label="Play">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+    </button>
+
+    <div class="controls" id="controls">
+      <input type="range" id="seek" min="0" max="1000" value="0" step="1">
+      <div class="row">
+        <button class="ibtn play" id="playBtn" aria-label="Play/Pause"></button>
+        <button class="ibtn" id="backBtn">−10</button>
+        <button class="ibtn" id="fwdBtn">+10</button>
+        <span class="time" id="timeText">0:00 / 0:00</span>
+        <span class="spacer"></span>
+        <select id="speed">
+          <option value="0.5">0.5×</option>
+          <option value="1" selected>1×</option>
+          <option value="1.25">1.25×</option>
+          <option value="1.5">1.5×</option>
+          <option value="2">2×</option>
+        </select>
+        <input type="range" id="volume" min="0" max="1" step="0.05" value="1">
+        <button class="ibtn" id="fsBtn" aria-label="Fullscreen">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="meta"><span id="fileName"></span><span id="status"></span></div>
+  <input type="file" id="fileInput" accept="video/webm,video/*" hidden>
+</main>
+
+<script>
+// ---------- Elements ----------
+const video = document.getElementById('video');
+const stage = document.getElementById('screen');
+const drop = document.getElementById('drop');
+const fileInput = document.getElementById('fileInput');
+const controls = document.getElementById('controls');
+const seek = document.getElementById('seek');
+const playBtn = document.getElementById('playBtn');
+const timeText = document.getElementById('timeText');
+const statusText = document.getElementById('status');
+const fileName = document.getElementById('fileName');
+
+let totalDuration = 0;   // the real length in seconds
+let isSeeking = false;
+
+// ---------- Helpers ----------
+function formatTime(seconds) {
+  if (!isFinite(seconds) || seconds < 0) seconds = 0;
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  const mm = h > 0 ? String(m).padStart(2, '0') : String(m);
+  const ss = String(s).padStart(2, '0');
+  return h > 0 ? h + ':' + mm + ':' + ss : mm + ':' + ss;
+}
+
+// ---------- Reading the real duration from the WebM file ----------
+// A WebM file is a stack of "Clusters" (chunks of video).
+// Each cluster has a start time, and every frame inside has a small offset.
+// The last cluster's start time + the last frame's offset = true length.
+
+// Reads a variable-length number used by WebM.
+// keepMarker = true for IDs, false for sizes.
+function readVint(bytes, pos, keepMarker) {
+  const first = bytes[pos];
+  if (first === undefined || first === 0) return null;
+  let length = 1;
+  let mask = 0x80;
+  while (!(first & mask)) { length++; mask >>= 1; }
+  if (pos + length > bytes.length) return null;
+
+  let value = keepMarker ? first : (first & (mask - 1));
+  let allOnes = (first & (mask - 1)) === (mask - 1);
+  for (let i = 1; i < length; i++) {
+    value = value * 256 + bytes[pos + i];
+    if (bytes[pos + i] !== 0xFF) allOnes = false;
+  }
+  if (!keepMarker && allOnes) value = -1; // "unknown size"
+  return { value: value, length: length };
+}
+
+// Find the TimecodeScale (nanoseconds per tick). Default is 1,000,000.
+function readTimecodeScale(head) {
+  for (let i = 0; i < head.length - 4; i++) {
+    if (head[i] === 0x2A && head[i + 1] === 0xD7 && head[i + 2] === 0xB1) {
+      const size = head[i + 3] & 0x0F;
+      let value = 0;
+      for (let j = 0; j < size; j++) value = value * 256 + head[i + 4 + j];
+      if (value > 0) return value;
+    }
+  }
+  return 1000000;
+}
+
+// Find the position of the last Cluster in a block of bytes.
+function findLastCluster(bytes) {
+  for (let i = bytes.length - 4; i >= 0; i--) {
+    if (bytes[i] === 0x1F && bytes[i + 1] === 0x43 &&
+        bytes[i + 2] === 0xB6 && bytes[i + 3] === 0x75) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+// Walk through the last cluster and return its time + last frame offset (in ticks).
+function readLastClusterTime(bytes, clusterPos) {
+  let pos = clusterPos + 4;
+  const clusterSize = readVint(bytes, pos, false);
+  if (!clusterSize) return null;
+  pos += clusterSize.length;
+
+  let clusterTime = null;
+  let lastOffset = 0;
+
+  while (pos < bytes.length) {
+    const id = readVint(bytes, pos, true);
+    if (!id) break;
+    pos += id.length;
+    const size = readVint(bytes, pos, false);
+    if (!size) break;
+    pos += size.length;
+
+    if (id.value === 0xE7) {                 // Cluster Timecode
+      let value = 0;
+      for (let i = 0; i < size.value; i++) value = value * 256 + bytes[pos + i];
+      clusterTime = value;
+      pos += size.value;
+    } else if (id.value === 0xA3 || id.value === 0xA1) {  // SimpleBlock / Block
+      const track = readVint(bytes, pos, false);
+      if (!track) break;
+      const offsetPos = pos + track.length;
+      let offset = (bytes[offsetPos] << 8) | bytes[offsetPos + 1];
+      if (offset > 32767) offset -= 65536;   // signed 16-bit
+      if (offset > lastOffset) lastOffset = offset;
+      pos += size.value;
+    } else if (id.value === 0xA0) {          // BlockGroup: look inside it
+      // do not skip, just continue into its children
+    } else {
+      if (size.value < 0) break;
+      pos += size.value;
+    }
+  }
+
+  if (clusterTime === null) return null;
+  return clusterTime + lastOffset;
+}
+
+async function scanFileDuration(file) {
+  try {
+    const headBytes = new Uint8Array(await file.slice(0, 4096).arrayBuffer());
+    const scale = readTimecodeScale(headBytes);
+
+    // Look at the last 16 MB first, then widen if no cluster is found.
+    const sizes = [16, 64, 256].map(mb => mb * 1024 * 1024);
+    for (const size of sizes) {
+      const start = Math.max(0, file.size - size);
+      const tail = new Uint8Array(await file.slice(start).arrayBuffer());
+      const clusterPos = findLastCluster(tail);
+      if (clusterPos >= 0) {
+        const ticks = readLastClusterTime(tail, clusterPos);
+        if (ticks !== null) return (ticks * scale) / 1e9;
+      }
+      if (start === 0) break;
+    }
+  } catch (err) {
+    console.warn('Duration scan failed', err);
+  }
+  return 0;
+}
+
+// Backup trick: jump to a huge time so the browser works out the length.
+function forceBrowserDuration() {
+  return new Promise(resolve => {
+    const done = () => {
+      video.removeEventListener('timeupdate', done);
+      video.currentTime = 0;
+      resolve(isFinite(video.duration) ? video.duration : 0);
+    };
+    video.addEventListener('timeupdate', done);
+    video.currentTime = 1e101;
+  });
+}
+
+// ---------- Loading a file ----------
+async function loadFile(file) {
+  if (!file) return;
+  statusText.textContent = 'Reading video length…';
+  fileName.textContent = file.name + ' (' + (file.size / 1048576).toFixed(1) + ' MB)';
+
+  drop.style.display = 'none';
+  video.style.display = 'block';
+  controls.style.display = 'flex';
+  stage.classList.add('loaded');
+
+  if (video.src) URL.revokeObjectURL(video.src);
+  video.src = URL.createObjectURL(file);
+
+  const scanned = await scanFileDuration(file);
+
+  await new Promise(resolve => {
+    if (video.readyState >= 1) resolve();
+    else video.addEventListener('loadedmetadata', resolve, { once: true });
+  });
+
+  if (scanned > 0) {
+    totalDuration = scanned;
+  } else if (isFinite(video.duration) && video.duration > 0) {
+    totalDuration = video.duration;
+  } else {
+    totalDuration = await forceBrowserDuration();
+  }
+
+  statusText.textContent = 'Length found: ' + formatTime(totalDuration);
+  updateUI();
+}
+
+// ---------- UI updates ----------
+function currentLength() {
+  // If playback goes past what we measured, trust the browser.
+  if (isFinite(video.duration) && video.duration > totalDuration) {
+    return video.duration;
+  }
+  return totalDuration;
+}
+
+function updateUI() {
+  const length = currentLength();
+  if (!isSeeking && length > 0) {
+    seek.value = Math.min(1000, (video.currentTime / length) * 1000);
+  }
+  seek.style.setProperty('--p', (seek.value / 10) + '%');
+  timeText.textContent = formatTime(video.currentTime) + ' / ' + formatTime(length);
+  playBtn.innerHTML = video.paused ? ICON_PLAY : ICON_PAUSE;
+  stage.classList.toggle('paused', video.paused);
+}
+
+function skip(seconds) {
+  const length = currentLength();
+  video.currentTime = Math.max(0, Math.min(length, video.currentTime + seconds));
+}
+
+function togglePlay() {
+  if (video.paused) video.play(); else video.pause();
+}
+
+// ---------- Events ----------
+video.addEventListener('timeupdate', updateUI);
+video.addEventListener('play', updateUI);
+video.addEventListener('pause', updateUI);
+video.addEventListener('durationchange', updateUI);
+
+seek.addEventListener('input', () => {
+  isSeeking = true;
+  const wanted = (seek.value / 1000) * currentLength();
+  seek.style.setProperty('--p', (seek.value / 10) + '%');
+  timeText.textContent = formatTime(wanted) + ' / ' + formatTime(currentLength());
+});
+seek.addEventListener('change', () => {
+  video.currentTime = (seek.value / 1000) * currentLength();
+  isSeeking = false;
+});
+
+playBtn.addEventListener('click', togglePlay);
+document.getElementById('backBtn').addEventListener('click', () => skip(-10));
+document.getElementById('fwdBtn').addEventListener('click', () => skip(10));
+document.getElementById('speed').addEventListener('change', e => {
+  video.playbackRate = parseFloat(e.target.value);
+});
+document.getElementById('volume').addEventListener('input', e => {
+  video.volume = parseFloat(e.target.value);
+});
+document.getElementById('fsBtn').addEventListener('click', () => {
+  const screen = document.getElementById('screen');
+  if (document.fullscreenElement) document.exitFullscreen();
+  else screen.requestFullscreen();
+});
+video.addEventListener('click', togglePlay);
+
+document.addEventListener('keydown', e => {
+  if (controls.style.display !== 'flex') return;
+  if (e.target.tagName === 'SELECT') return;
+  if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+  if (e.code === 'ArrowRight') skip(10);
+  if (e.code === 'ArrowLeft') skip(-10);
+  if (e.code === 'KeyF') document.getElementById('fsBtn').click();
+});
+
+// ---------- File picking and drag & drop ----------
+drop.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => loadFile(fileInput.files[0]));
+
+['dragenter', 'dragover'].forEach(name =>
+  document.addEventListener(name, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(name =>
+  document.addEventListener(name, e => { e.preventDefault(); drop.classList.remove('over'); }));
+document.addEventListener('drop', e => loadFile(e.dataTransfer.files[0]));
+
+// ---------- Look and feel ----------
+const ICON_PLAY = '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+const ICON_PAUSE = '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>';
+playBtn.innerHTML = ICON_PLAY;
+
+document.getElementById('bigPlay').addEventListener('click', togglePlay);
+document.getElementById('openBtn').addEventListener('click', () => fileInput.click());
+
+// Hide the controls while the video plays and the mouse is still.
+let idleTimer;
+function wake() {
+  stage.classList.remove('idle');
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    if (!video.paused) stage.classList.add('idle');
+  }, 2500);
+}
+stage.addEventListener('mousemove', wake);
+stage.addEventListener('touchstart', wake);
+video.addEventListener('pause', wake);
+video.addEventListener('play', wake);
+</script>
+</body>
+</html>
